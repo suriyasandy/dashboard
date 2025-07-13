@@ -1,0 +1,53 @@
+from data_processor import DataProcessor
+import numpy as np
+
+def analyze_thresholds(trade_df, original_thresholds, adjusted_thresholds):
+    processor = DataProcessor()
+
+    # Step 1: Preprocess trade data
+    processed_trade = processor.preprocess_trade_data(trade_df)
+
+    # Step 2: Apply original thresholds
+    merged_original = processor.merge_trade_threshold_data(processed_trade, original_thresholds)
+    
+    # Step 3: Count original alerts
+    original_alerts = self._count_alerts(merged_original, 'ApplicableThreshold')
+
+    # Step 4: Create adjusted threshold mapping
+    adjusted_threshold_dict = dict(zip(adjusted_thresholds['CCY'], adjusted_thresholds['AdjustedThreshold']))
+
+    # Step 5: Create adjusted copy of data
+    merged_adjusted = merged_original.copy()
+    
+    # Step 6: Assign thresholds based on currencies
+    merged_adjusted['AdjustedThreshold1'] = merged_adjusted['Currency1'].map(
+        lambda x: adjusted_threshold_dict.get(x, np.nan)
+    )
+    merged_adjusted['AdjustedThreshold2'] = merged_adjusted['Currency2'].map(
+        lambda x: adjusted_threshold_dict.get(x, np.nan)
+    )
+
+    # Step 7: Select maximum threshold if available
+    merged_adjusted['AdjustedApplicableThreshold'] = np.nanmax(
+        merged_adjusted[['AdjustedThreshold1', 'AdjustedThreshold2']].fillna(0).values, axis=1
+    )
+
+    # Step 8: Count adjusted alerts
+    adjusted_alerts = self._count_alerts(merged_adjusted, 'AdjustedApplicableThreshold')
+
+    # Step 9: Group by LegalEntity & SourceSystem
+    results = {}
+    for (le, ss), group in merged_adjusted.groupby(['LegalEntity', 'SourceSystem']):
+        total_volume = group['Volume'].sum()
+        proposed_alerts = (group['DeviationPercent'] > group['ApplicableThreshold']).sum()
+        adjusted_alerts = (group['DeviationPercent'] > group['AdjustedApplicableThreshold']).sum()
+        
+        results[(le, ss)] = {
+            'LegalEntity': le,
+            'SourceSystem': ss,
+            'TotalVolume': total_volume,
+            'ProposedAlerts': int(proposed_alerts),
+            'AdjustedAlerts': int(adjusted_alerts)
+        }
+
+    return results
