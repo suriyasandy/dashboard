@@ -1,0 +1,63 @@
+import os
+import pandas as pd
+
+def match_files(self):
+    matched_files = []
+    key_columns = ["trade_id"]
+    summary_records = []
+
+    for subdir in os.listdir(self.uat_dir):
+        uat_file_dir = os.path.join(self.uat_dir, subdir)
+        prod_file_dir = os.path.join(self.prod_dir, subdir)
+
+        for filename in os.listdir(uat_file_dir):
+            if not filename.endswith(".csv"):
+                continue
+
+            uat_file = os.path.join(uat_file_dir, filename)
+            prod_file = os.path.join(prod_file_dir, filename)
+
+            if os.path.exists(prod_file):
+                df_uat = pd.read_csv(uat_file)
+                df_prod = pd.read_csv(prod_file)
+
+                if all(col in df_uat.columns and col in df_prod.columns for col in key_columns):
+                    df_uat[key_columns] = df_uat[key_columns].astype(str)
+                    df_prod[key_columns] = df_prod[key_columns].astype(str)
+
+                    df_matched = df_uat.merge(
+                        df_prod[key_columns].drop_duplicates(),
+                        on=key_columns,
+                        how="inner"
+                    )
+
+                    df_unmatched = df_uat[~df_uat[key_columns[0]].isin(df_matched[key_columns[0]])]
+
+                    if not df_matched.empty:
+                        output_file = os.path.join(self.output_dir, filename)
+                        df_matched.to_csv(output_file, index=False)
+                        matched_files.append(output_file)
+
+                    # ✅ Extract LegalEntity and SourceSystem from filename
+                    parts = filename.replace(".csv", "").split("_")
+                    if len(parts) >= 3:
+                        legal_entity = parts[1]
+                        source_system = parts[2]
+                        index_key = f"{legal_entity}_{source_system}"
+
+                        summary_records.append({
+                            'Index': index_key,
+                            'UAT': len(df_uat),
+                            'PROD': len(df_prod),
+                            'Matched': len(df_matched),
+                            'Unmatched': len(df_unmatched)
+                        })
+                else:
+                    print(f"⚠️ Missing key columns in {filename}")
+            else:
+                print(f"❌ PROD file does not exist for {filename}")
+
+    # ✅ Create summary DataFrame with index
+    summary_df = pd.DataFrame(summary_records).set_index("Index")
+
+    return matched_files, summary_df
