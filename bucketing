@@ -1,37 +1,64 @@
-import pandas as pd
-import numpy as np
+def generate_alert_summary(alerts_df, threshold_df, bucket_type="currency", bin_size=0.2):
+    import numpy as np
+    import pandas as pd
 
-def create_threshold_bucket_summary(alerts_df, threshold_df):
-    # Step 1: Merge threshold into alerts_df
-    alerts_df = alerts_df.merge(threshold_df, left_on='Currency', right_on='CURR', how='left')
+    alerts_df = alerts_df.copy()
+    threshold_df = threshold_df.copy()
 
-    all_summary = []
+    # Extract Currency
+    alerts_df['Currency'] = alerts_df['ccypair'].str[:3]
 
-    # Step 2: Loop through each currency and apply dynamic buckets
-    for curr in alerts_df['Currency'].unique():
-        sub_df = alerts_df[alerts_df['Currency'] == curr]
-        threshold = sub_df['Threshold'].iloc[0]  # Assuming consistent threshold per currency
+    # Join alerts with group info if group-based
+    if bucket_type == "group":
+        # Assuming alerts_df also contains 'GROUP' column
+        alerts_df = alerts_df.merge(threshold_df[['CURR', 'GROUP', 'Threshold']], 
+                                    left_on=['Currency', 'GROUP'], right_on=['CURR', 'GROUP'], how='left')
+        alerts_df.rename(columns={"Threshold": "Max_Threshold"}, inplace=True)
+    else:
+        # currency-based threshold
+        max_thresholds = threshold_df.groupby('CURR')['Threshold'].max().reset_index()
+        max_thresholds.columns = ['Currency', 'Max_Threshold']
+        alerts_df = alerts_df.merge(max_thresholds, on='Currency', how='left')
 
-        max_dev = sub_df['DeviationPercent'].max()
-        bins = np.arange(0, max_dev + threshold, threshold)
+    # Define bins per row based on max_threshold
+    def get_bins(row):
+        if pd.isnull(row['Max_Threshold']):
+            return []
+        return np.arange(0, row['Max_Threshold'] + bin_size, bin_size)
+
+    def get_label_bins(bins):
+        return [f"{round(bins[i], 2)}–{round(bins[i+1], 2)}" for i in range(len(bins)-1)]
+
+    def assign_bucket(row):
+        deviation = row['deviationpercent']
+        if pd.isnull(deviation):
+            return np.nan
+        bins = get_bins(row)
         if len(bins) < 2:
-            continue  # Skip if not enough to bin
+            return np.nan
+        labels = get_label_bins(bins)
+        return pd.cut([deviation], bins=bins, labels=labels, include_lowest=True)[0]
 
-        labels = [f"{round(bins[i], 2)}–{round(bins[i+1], 2)}" for i in range(len(bins)-1)]
-        sub_df['Bucket'] = pd.cut(sub_df['DeviationPercent'], bins=bins, labels=labels, include_lowest=True)
+    alerts_df['Threshold_Bucket'] = alerts_df.apply(assign_bucket, axis=1)
 
-        # Count how many fall in each bucket
-        bucket_counts = sub_df['Bucket'].value_counts().rename_axis('Bucket').reset_index(name=curr)
+    # Now create pivot based on selected mode
+    if bucket_type == "group":
+        index = ['GROUP', 'Threshold_Bucket']
+    else:
+        index = ['Threshold_Bucket']
 
-        all_summary.append(bucket_counts)
+    summary = alerts_df.pivot_table(
+        index=index,
+        columns='Currency',
+        values='trade_id',  # use 'trade_id' or 'alert_id'
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
 
-    # Step 3: Combine all currency-specific bucket counts
-    final_df = None
-    for df in all_summary:
-        if final_df is None:
-            final_df = df
-        else:
-            final_df = pd.merge(final_df, df, on='Bucket', how='outer')
+    # Sort Threshold Bucket
+    if "Threshold_Bucket" in summary.columns:
+        summary['Bucket_Sort'] = summary['Threshold_Bucket'].apply(lambda x: float(str(x).split('–')[0]) if pd.notnull(x) else -1)
+        summary = summary.sort_values(['GROUP', 'Bucket_Sort'] if 'GROUP' in summary.columns else ['Bucket_Sort'])
+        summary = summary.drop('Bucket_Sort', axis=1)
 
-    final_df = final_df.fillna(0).set_index('Bucket').astype(int)
-    return final_df.sort_index()
+    return summary
