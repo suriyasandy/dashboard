@@ -19,3 +19,14 @@ if selected_buckets:
     )
 else:
     st.info("✅ Select one or more threshold buckets from the table above to see matching alerts.")
+
+
+selected_rows = response['selected_rows']
+
+# SAFELY extract selected threshold buckets
+selected_buckets = []
+for row in selected_rows:
+    if isinstance(row, dict) and 'Threshold_Bucket' in row:
+        bucket = row['Threshold_Bucket']
+        if bucket != 'TOTAL':
+            selected_buckets.append(bucket)
