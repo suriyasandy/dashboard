@@ -1,0 +1,97 @@
+import pandas as pd
+import numpy as np
+import streamlit as st
+from st_aggrid import AgGrid, GridOptionsBuilder
+
+def expand_last_group_threshold(alerts_df, bin_edges, bin_size=0.5):
+    """
+    Replaces the last group threshold bucket (e.g., max–inf) with finer 0.5-wide bins up to max deviation.
+
+    Parameters:
+        alerts_df (pd.DataFrame): Must contain 'deviationpercent' and 'Currency'
+        bin_edges (List[float]): Existing threshold bin edges (e.g., [0.0, 0.2, ..., 2.0, inf])
+        bin_size (float): Size of suggested bin intervals (default = 0.5)
+
+    Displays:
+        - Pivot table: bin ranges × currency with alert counts
+        - Download button
+    """
+
+    # Step 1: Get max defined threshold (last finite bin)
+    finite_edges = [x for x in bin_edges if np.isfinite(x)]
+    if not finite_edges:
+        st.error("❌ Invalid bin_edges passed.")
+        return
+
+    max_group_threshold = max(finite_edges)
+
+    # Step 2: Find max deviation value
+    max_dev = alerts_df['deviationpercent'].max()
+    rounded_max_dev = round(np.ceil(max_dev / bin_size) * bin_size, 2)
+
+    if max_group_threshold >= rounded_max_dev:
+        st.info("✅ No deviations above the last threshold.")
+        return
+
+    # Step 3: Create new bins
+    new_bins = np.arange(max_group_threshold, rounded_max_dev + bin_size, bin_size)
+    new_bin_labels = [
+        f"{round(new_bins[i], 2)}–{round(new_bins[i+1], 2)}"
+        for i in range(len(new_bins) - 1)
+    ]
+
+    # Step 4: Filter alerts above last group threshold
+    alerts_above = alerts_df[alerts_df['deviationpercent'] > max_group_threshold].copy()
+
+    if alerts_above.empty:
+        st.info("✅ No alerts above the last threshold.")
+        return
+
+    # Step 5: Assign new buckets
+    alerts_above['Expanded_Bucket'] = pd.cut(
+        alerts_above['deviationpercent'],
+        bins=new_bins,
+        labels=new_bin_labels,
+        include_lowest=True
+    )
+
+    # Step 6: Create pivot summary
+    expanded_summary = alerts_above.pivot_table(
+        index='Expanded_Bucket',
+        columns='Currency',
+        values='trade_id',
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
+
+    # Step 7: Add total row
+    total_row = expanded_summary.drop(columns='Expanded_Bucket').sum().to_frame().T
+    total_row.insert(0, 'Expanded_Bucket', 'TOTAL')
+    expanded_summary = pd.concat([expanded_summary, total_row], ignore_index=True)
+
+    # Step 8: Display results
+    st.subheader("📈 Replaced Last Group (inf) with Fine-Grained Bins (0.5 Interval)")
+
+    gb = GridOptionsBuilder.from_dataframe(expanded_summary)
+    for col in expanded_summary.columns:
+        gb.configure_column(col, maxWidth=120)
+    grid_options = gb.build()
+
+    AgGrid(
+        expanded_summary,
+        gridOptions=grid_options,
+        height=350,
+        width='100%',
+        fit_columns_on_grid_load=False,
+        update_mode='NO_UPDATE',
+        allow_unsafe_jscode=True,
+        theme='streamlit',
+    )
+
+    csv_data = expanded_summary.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Download Fine-Grained Threshold Summary",
+        data=csv_data,
+        file_name="expanded_threshold_summary.csv",
+        mime="text/csv"
+    )
