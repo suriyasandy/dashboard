@@ -1,0 +1,135 @@
+def expand_last_group_threshold(alerts_df, threshold_df, bin_size=0.5):
+    """
+    Expand last group bucket for alerts exceeding max threshold.
+    Shows fixed-width bins starting from max group threshold.
+
+    Parameters:
+        alerts_df: Must contain 'ccypair', 'deviationpercent'
+        threshold_df: Must contain 'Threshold'
+    """
+
+    import pandas as pd
+    import numpy as np
+    from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+
+    # 1. Get max threshold
+    max_threshold = threshold_df['Threshold'].max()
+
+    # 2. Filter alerts > max threshold
+    df_exceed = alerts_df[alerts_df['deviationpercent'] > max_threshold].copy()
+    if df_exceed.empty:
+        st.info("✅ No alerts exceeding max threshold.")
+        return
+
+    # 3. Split currencies
+    df_exceed['CCY1'] = df_exceed['ccypair'].str[:3]
+    df_exceed['CCY2'] = df_exceed['ccypair'].str[3:6]
+
+    # 4. Melt for dual currency
+    melted = df_exceed.melt(
+        id_vars=['deviationpercent'],
+        value_vars=['CCY1', 'CCY2'],
+        value_name='Currency'
+    )
+
+    # 5. Define bins starting from max_threshold to max_deviation
+    max_dev = melted['deviationpercent'].max()
+    bin_start = round(np.floor(max_threshold / bin_size) * bin_size, 2)
+    bin_end = round(np.ceil(max_dev / bin_size) * bin_size + bin_size, 2)
+    bins = np.arange(bin_start, bin_end + bin_size, bin_size)
+
+    bin_labels = [
+        f"{round(bins[i], 2)}–{round(bins[i+1], 2)}"
+        for i in range(len(bins) - 1)
+    ]
+
+    # 6. Assign deviation bucket
+    melted['Deviation_Bucket'] = pd.cut(
+        melted['deviationpercent'],
+        bins=bins,
+        labels=bin_labels,
+        include_lowest=True
+    )
+
+    # 7. Pivot table
+    summary = melted.pivot_table(
+        index='Deviation_Bucket',
+        columns='Currency',
+        values='deviationpercent',
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
+
+    # 8. Add total row
+    total_row = summary.drop(columns='Deviation_Bucket').sum().to_frame().T
+    total_row.insert(0, 'Deviation_Bucket', 'TOTAL')
+    summary = pd.concat([summary, total_row], ignore_index=True)
+
+    # 9. Extract lower bounds
+    def extract_lower(x):
+        try:
+            return float(str(x).split('–')[0])
+        except:
+            return np.nan
+
+    summary['Lower_Bound'] = summary['Deviation_Bucket'].apply(extract_lower)
+
+    # 10. Drop all-zero columns
+    non_total = summary[summary['Deviation_Bucket'] != 'TOTAL']
+    non_zero_cols = non_total.drop(columns=['Deviation_Bucket', 'Lower_Bound']).any()
+    keep_cols = ['Deviation_Bucket', 'Lower_Bound'] + list(non_zero_cols[non_zero_cols].index)
+    summary = summary[keep_cols]
+
+    # 11. JS highlight rows (all will qualify since they exceed threshold)
+    def get_cell_style_js(thresh):
+        return JsCode(f"""
+            function(params) {{
+                if (params.data.Lower_Bound > {thresh}) {{
+                    return {{
+                        'backgroundColor': '#e8f6ff',
+                        'color': 'black'
+                    }}
+                }}
+            }}
+        """)
+
+    # 12. Display
+    st.subheader("📈 Expanded Deviation Buckets > Max Group Threshold")
+
+    gb = GridOptionsBuilder.from_dataframe(summary)
+    for col in summary.columns:
+        if col == "Lower_Bound":
+            gb.configure_column(col, hide=True)
+        else:
+            gb.configure_column(col, cellStyle=get_cell_style_js(max_threshold), minWidth=100, autoWidth=True)
+
+    grid_options = gb.build()
+
+    st.markdown("""
+    <style>
+    .ag-theme-streamlit {
+        overflow-x: auto !important;
+        display: block;
+        white-space: nowrap;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    AgGrid(
+        summary.drop(columns=['Lower_Bound']),
+        gridOptions=grid_options,
+        height=400,
+        width='100%',
+        fit_columns_on_grid_load=False,
+        theme='streamlit',
+        allow_unsafe_jscode=True
+    )
+
+    # 13. Download
+    csv = summary.drop(columns=["Lower_Bound"]).to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Download Expanded Bucket Summary",
+        data=csv,
+        file_name="expanded_last_group_summary.csv",
+        mime="text/csv"
+    )
