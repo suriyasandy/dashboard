@@ -1,0 +1,56 @@
+def pivot_alert_distribution(
+    df: pd.DataFrame,
+    row_col: str,
+    col_col: str,
+    value_col: str,
+    agg: str = 'count',
+    drop_all_zero_cols: bool = True,
+    add_total: bool = True
+) -> pd.DataFrame:
+    """
+    Generic pivot table builder for alert distribution.
+
+    Parameters:
+        df (pd.DataFrame): Input DataFrame
+        row_col (str): Column to use for rows (e.g., 'Deviation_Bucket')
+        col_col (str): Column to use for columns (e.g., 'Currency')
+        value_col (str): Column to count/sum
+        agg (str): Aggregation method: 'count' or 'sum'
+        drop_all_zero_cols (bool): Drop columns where all values (excluding TOTAL) are 0
+        add_total (bool): Append a total row
+
+    Returns:
+        pd.DataFrame: Pivoted summary table
+    """
+    if agg == 'count':
+        pivot = df.pivot_table(
+            index=row_col,
+            columns=col_col,
+            values=value_col,
+            aggfunc='count',
+            fill_value=0
+        )
+    elif agg == 'sum':
+        pivot = df.pivot_table(
+            index=row_col,
+            columns=col_col,
+            values=value_col,
+            aggfunc='sum',
+            fill_value=0
+        )
+    else:
+        raise ValueError("Unsupported agg type. Use 'count' or 'sum'.")
+
+    pivot = pivot.reset_index()
+
+    if add_total:
+        total_row = pivot.drop(columns=row_col).sum().to_frame().T
+        total_row.insert(0, row_col, 'TOTAL')
+        pivot = pd.concat([pivot, total_row], ignore_index=True)
+
+    if drop_all_zero_cols:
+        non_total = pivot[pivot[row_col] != 'TOTAL']
+        non_zero_cols = non_total.loc[:, non_total.columns != row_col].any()
+        pivot = pivot[[row_col] + list(non_zero_cols[non_zero_cols].index)]
+
+    return pivot
