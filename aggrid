@@ -2,3 +2,8 @@
 non_total_df = expanded_summary[expanded_summary['Expanded_Bucket'] != 'TOTAL']
 non_zero_cols = non_total_df.loc[:, non_total_df.columns != 'Expanded_Bucket'].any()
 expanded_summary = expanded_summary[['Expanded_Bucket'] + list(non_zero_cols[non_zero_cols].index)]
+# Drop rows where all currency values are 0 (excluding 'Expanded_Bucket' and 'TOTAL')
+expanded_summary_cleaned = expanded_summary[
+    (expanded_summary['Expanded_Bucket'] == 'TOTAL') |
+    (expanded_summary.drop(columns=['Expanded_Bucket']) != 0).any(axis=1)
+].copy()
