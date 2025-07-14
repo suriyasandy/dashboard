@@ -1,0 +1,138 @@
+import pandas as pd
+import numpy as np
+import streamlit as st
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+
+st.set_page_config(page_title="GFX Threshold Summary", layout="wide")
+
+# ================================
+# Load Your Data Here (Replace this with actual data source)
+# ================================
+
+@st.cache_data
+def load_data():
+    # Sample threshold_df
+    threshold_df = pd.DataFrame({
+        'GROUP': [1, 2, 3, 1, 3],
+        'Threshold': [0.4, 0.6, 0.9, 0.4, 0.9],
+        'CURR': ['EUR', 'EUR', 'EUR', 'USD', 'USD']
+    })
+
+    # Sample alerts_df
+    alerts_df = pd.DataFrame({
+        'trade_id': range(1, 11),
+        'ccypair': ['EURUSD']*5 + ['USDJPY']*5,
+        'deviationpercent': [0.1, 0.3, 0.45, 0.5, 0.95, 0.2, 0.35, 0.55, 0.65, 1.2]
+    })
+
+    return alerts_df, threshold_df
+
+alerts_df, threshold_df = load_data()
+
+# ================================
+# Groupwise Summary Logic
+# ================================
+def generate_groupwise_threshold_summary(alerts_df, threshold_df):
+    group_thresholds = (
+        threshold_df[['GROUP', 'Threshold']]
+        .drop_duplicates()
+        .sort_values(by='Threshold')
+        .reset_index(drop=True)
+    )
+
+    bin_edges = [0.0] + list(group_thresholds['Threshold'].values)
+    bin_edges[-1] = bin_edges[-1]
+    bin_edges.append(np.inf)
+
+    bin_labels = [
+        f"{round(bin_edges[i], 2)}–{'inf' if bin_edges[i+1] == np.inf else round(bin_edges[i+1], 2)}"
+        for i in range(len(bin_edges)-1)
+    ]
+
+    alerts_df = alerts_df.copy()
+    alerts_df['Currency'] = alerts_df['ccypair'].str[:3]
+
+    def get_alert_bucket(deviation):
+        if pd.isnull(deviation):
+            return np.nan
+        return pd.cut([deviation], bins=bin_edges, labels=bin_labels, include_lowest=True)[0]
+
+    alerts_df['Threshold_Bucket'] = alerts_df['deviationpercent'].apply(get_alert_bucket)
+
+    summary = alerts_df.pivot_table(
+        index='Threshold_Bucket',
+        columns='Currency',
+        values='trade_id',
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
+
+    # Fill missing rows
+    all_ranges = pd.DataFrame({'Threshold_Bucket': bin_labels})
+    summary = pd.merge(all_ranges, summary, on='Threshold_Bucket', how='left')
+    summary = summary.fillna(0)
+
+    # Add total row
+    total_row = summary.drop(columns=['Threshold_Bucket']).sum().to_frame().T
+    total_row.insert(0, 'Threshold_Bucket', 'TOTAL')
+    summary = pd.concat([summary, total_row], ignore_index=True)
+
+    return summary, alerts_df, bin_edges, bin_labels
+
+# ================================
+# Generate Summary
+# ================================
+summary_df, alerts_df, bin_edges, bin_labels = generate_groupwise_threshold_summary(alerts_df, threshold_df)
+
+st.title("📈 GFX Threshold Bucket Summary (Group-wise)")
+
+# ================================
+# Display Pivot Summary
+# ================================
+st.subheader("📊 Group-wise Threshold Summary")
+
+gb = GridOptionsBuilder.from_dataframe(summary_df)
+gb.configure_default_column(groupable=True, enablePivot=True, enableValue=True, editable=False)
+gb.configure_selection(selection_mode="single", use_checkbox=True)
+grid_options = gb.build()
+
+response = AgGrid(
+    summary_df,
+    gridOptions=grid_options,
+    height=300,
+    width='100%',
+    update_mode=GridUpdateMode.SELECTION_CHANGED,
+    fit_columns_on_grid_load=True,
+    allow_unsafe_jscode=True,
+    theme='streamlit',
+)
+
+# ================================
+# Select Currency for Drill-Down
+# ================================
+st.markdown("---")
+st.subheader("🔍 View Alerts by Currency")
+
+available_currencies = [col for col in summary_df.columns if col not in ['Threshold_Bucket', 'TOTAL']]
+selected_currency = st.selectbox("Select currency to view details:", available_currencies)
+
+def get_alert_bucket_row(deviation):
+    if pd.isnull(deviation):
+        return np.nan
+    return pd.cut([deviation], bins=bin_edges, labels=bin_labels, include_lowest=True)[0]
+
+if selected_currency:
+    filtered_alerts = alerts_df[alerts_df['Currency'] == selected_currency].copy()
+    filtered_alerts['Threshold_Bucket'] = filtered_alerts['deviationpercent'].apply(get_alert_bucket_row)
+
+    st.markdown(f"### 🔎 Alerts for {selected_currency}")
+    st.dataframe(filtered_alerts, use_container_width=True)
+
+    # Download
+    csv_data = filtered_alerts.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label=f"⬇️ Download {selected_currency} Alerts",
+        data=csv_data,
+        file_name=f"{selected_currency}_alerts.csv",
+        mime='text/csv'
+    )
