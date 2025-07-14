@@ -1,0 +1,46 @@
+from st_aggrid.shared import JsCode
+
+def highlight_exceeding_cells(summary_df, threshold_df):
+    # Create mapping of {currency: proposed_threshold}
+    threshold_map = dict(threshold_df[['Currency', 'Proposed_Threshold']].values)
+
+    # Extract lower bound from deviation bucket for comparison
+    def extract_lower_bound(bucket):
+        try:
+            return float(bucket.split('–')[0])
+        except:
+            return None
+
+    summary_df['lower_bound'] = summary_df['Deviation_Bucket'].apply(extract_lower_bound)
+
+    # Configure AgGrid
+    gb = GridOptionsBuilder.from_dataframe(summary_df.drop(columns=['lower_bound']))
+    for col in summary_df.columns:
+        if col in ['Deviation_Bucket', 'lower_bound', 'TOTAL']:
+            continue
+        threshold = threshold_map.get(col, None)
+        if threshold is not None:
+            js = JsCode(f"""
+                function(params) {{
+                    let val = params.value;
+                    let rowVal = parseFloat(params.data.lower_bound);
+                    if (rowVal > {threshold}) {{
+                        return {{ 'backgroundColor': '#f8d7da', 'color': 'black' }};
+                    }}
+                }}
+            """)
+            gb.configure_column(col, cellStyle=js)
+        else:
+            gb.configure_column(col)
+
+    grid_options = gb.build()
+
+    AgGrid(
+        summary_df.drop(columns=['lower_bound']),
+        gridOptions=grid_options,
+        height=350,
+        width='100%',
+        fit_columns_on_grid_load=False,
+        theme='streamlit',
+        allow_unsafe_jscode=True
+    )
