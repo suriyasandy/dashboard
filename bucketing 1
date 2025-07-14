@@ -1,0 +1,54 @@
+import pandas as pd
+import numpy as np
+
+def generate_groupwise_threshold_summary(alerts_df, threshold_df):
+    # Step 1: Extract unique group thresholds and sort
+    group_thresholds = (
+        threshold_df[['GROUP', 'Threshold']]
+        .drop_duplicates()
+        .sort_values(by='Threshold')
+        .reset_index(drop=True)
+    )
+
+    # Step 2: Create bin edges from thresholds
+    bin_edges = [0.0] + list(group_thresholds['Threshold'].values)
+    bin_labels = [
+        f"{round(bin_edges[i], 2)}–{round(bin_edges[i+1], 2)}"
+        for i in range(len(bin_edges)-1)
+    ]
+    group_thresholds['Range'] = bin_labels
+
+    # Step 3: Map group ranges to each currency
+    group_currency_map = threshold_df[['GROUP', 'CURR']].drop_duplicates()
+
+    # Step 4: Assign group-level bucket to alerts
+    alerts_df = alerts_df.copy()
+    alerts_df['Currency'] = alerts_df['ccypair'].str[:3]
+
+    def get_alert_bucket(deviation):
+        if pd.isnull(deviation):
+            return np.nan
+        return pd.cut(
+            [deviation],
+            bins=bin_edges,
+            labels=bin_labels,
+            include_lowest=True
+        )[0]
+
+    alerts_df['Threshold_Bucket'] = alerts_df['deviationpercent'].apply(get_alert_bucket)
+
+    # Step 5: Pivot table → rows = Bucket Range, cols = Currency, values = count
+    summary = alerts_df.pivot_table(
+        index='Threshold_Bucket',
+        columns='Currency',
+        values='trade_id',
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
+
+    # Step 6: Ensure full range ordering and fill missing rows
+    all_ranges = pd.DataFrame({'Threshold_Bucket': bin_labels})
+    summary = pd.merge(all_ranges, summary, on='Threshold_Bucket', how='left')
+    summary = summary.fillna(0)
+
+    return summary
