@@ -1,0 +1,106 @@
+import pandas as pd
+import numpy as np
+import streamlit as st
+from st_aggrid import AgGrid, GridOptionsBuilder
+
+def generate_dual_currency_deviation_distribution(alerts_df, bin_size=0.5):
+    """
+    For each trade, count it towards both currencies in the ccypair.
+    Group alerts into fixed-width deviation bins per currency.
+
+    Parameters:
+        alerts_df (pd.DataFrame): Must contain 'ccypair' and 'deviationpercent'
+        bin_size (float): Size of each deviation bucket (default = 0.5)
+    """
+
+    # Validate required columns
+    if 'ccypair' not in alerts_df.columns or 'deviationpercent' not in alerts_df.columns:
+        st.error("❌ alerts_df must contain 'ccypair' and 'deviationpercent'")
+        return
+
+    alerts_df = alerts_df.copy()
+
+    # Step 1: Split currencies
+    alerts_df['CCY1'] = alerts_df['ccypair'].str[:3]
+    alerts_df['CCY2'] = alerts_df['ccypair'].str[3:6]
+
+    # Step 2: Melt to one currency per row
+    melted = alerts_df.melt(
+        id_vars=['deviationpercent'],
+        value_vars=['CCY1', 'CCY2'],
+        var_name='Position',
+        value_name='Currency'
+    )
+
+    # Step 3: Bin by deviationpercent
+    max_dev = melted['deviationpercent'].max()
+    max_rounded = round(np.ceil(max_dev / bin_size) * bin_size, 2)
+    bins = np.arange(0.0, max_rounded + bin_size, bin_size)
+
+    bin_labels = [
+        f"{round(bins[i], 2)}–{round(bins[i+1], 2)}"
+        for i in range(len(bins) - 1)
+    ]
+
+    melted['Deviation_Bucket'] = pd.cut(
+        melted['deviationpercent'],
+        bins=bins,
+        labels=bin_labels,
+        include_lowest=True
+    )
+
+    # Step 4: Pivot table
+    summary = melted.pivot_table(
+        index='Deviation_Bucket',
+        columns='Currency',
+        values='deviationpercent',
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
+
+    # Step 5: Add total row
+    total_row = summary.drop(columns='Deviation_Bucket').sum().to_frame().T
+    total_row.insert(0, 'Deviation_Bucket', 'TOTAL')
+    summary = pd.concat([summary, total_row], ignore_index=True)
+
+    # Step 6: Drop all-zero columns (excluding 'Deviation_Bucket')
+    non_total = summary[summary['Deviation_Bucket'] != 'TOTAL']
+    non_zero_cols = non_total.loc[:, non_total.columns != 'Deviation_Bucket'].any()
+    summary = summary[['Deviation_Bucket'] + list(non_zero_cols[non_zero_cols].index)]
+
+    # Step 7: Display with AgGrid
+    st.subheader("📊 Deviation Bucket Distribution Per Currency (Dual Mapping)")
+
+    gb = GridOptionsBuilder.from_dataframe(summary)
+    for col in summary.columns:
+        gb.configure_column(col, minWidth=100, resizable=True, autoWidth=True)
+    grid_options = gb.build()
+
+    # Add scrollable styling
+    st.markdown("""
+    <style>
+    .ag-theme-streamlit {
+        overflow-x: auto !important;
+        display: block;
+        white-space: nowrap;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    AgGrid(
+        summary,
+        gridOptions=grid_options,
+        height=350,
+        width='100%',
+        fit_columns_on_grid_load=False,
+        theme='streamlit',
+    )
+
+    # Download
+    csv_data = summary.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Download Deviation Bucket Summary",
+        data=csv_data,
+        file_name="currency_deviation_distribution.csv",
+        mime="text/csv"
+    )
