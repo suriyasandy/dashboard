@@ -1,0 +1,21 @@
+selected_rows = response['selected_rows']
+selected_buckets = [row['Threshold_Bucket'] for row in selected_rows if row['Threshold_Bucket'] != 'TOTAL']
+
+# ================================
+# Show Filtered Alerts for Selected Bucket(s)
+# ================================
+if selected_buckets:
+    st.markdown("### 🔎 Filtered Alerts for Selected Bucket(s):")
+    filtered_alerts = alerts_df[alerts_df['Threshold_Bucket'].isin(selected_buckets)].copy()
+
+    st.dataframe(filtered_alerts, use_container_width=True)
+
+    csv_data = filtered_alerts.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label=f"⬇️ Download Filtered Alerts",
+        data=csv_data,
+        file_name=f"filtered_alerts.csv",
+        mime='text/csv'
+    )
+else:
+    st.info("✅ Select one or more threshold buckets from the table above to see matching alerts.")
