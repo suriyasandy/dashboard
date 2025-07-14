@@ -26,3 +26,10 @@ response = AgGrid(
     allow_unsafe_jscode=True,
     theme='streamlit',
 )
+if isinstance(bin_labels, (list, pd.Series)):
+    last_threshold = max([
+        float(str(label).split("–")[1].replace('inf', '9999'))
+        for label in bin_labels if 'inf' in str(label)
+    ])
+else:
+    raise ValueError("⚠️ bin_labels must be a list of threshold label strings.")
