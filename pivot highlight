@@ -1,34 +1,120 @@
-from st_aggrid.shared import JsCode
+def generate_dual_currency_deviation_distribution(alerts_df, threshold_df, bin_size=0.5):
+    """
+    Dual-currency deviation distribution with highlighting for buckets beyond max group threshold.
 
-def highlight_exceeding_cells(summary_df, threshold_df):
-    # Create mapping of {currency: proposed_threshold}
-    threshold_map = dict(threshold_df[['Currency', 'Proposed_Threshold']].values)
+    Parameters:
+        alerts_df (pd.DataFrame): Must contain 'ccypair' and 'deviationpercent'
+        threshold_df (pd.DataFrame): Must contain 'GROUP' and 'Threshold'
+        bin_size (float): Size of each deviation bucket
+    """
+    import pandas as pd
+    import numpy as np
+    from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
+    import streamlit as st
 
-    # Extract lower bound from deviation bucket for comparison
-    def extract_lower_bound(bucket):
-        try:
-            return float(bucket.split('–')[0])
-        except:
-            return None
+    # Step 0: Get max threshold from threshold_df
+    max_threshold = threshold_df['Threshold'].max()
 
-    summary_df['lower_bound'] = summary_df['Deviation_Bucket'].apply(extract_lower_bound)
+    # Step 1: Prepare alert dataframe
+    alerts_df = alerts_df.copy()
+    alerts_df['CCY1'] = alerts_df['ccypair'].str[:3]
+    alerts_df['CCY2'] = alerts_df['ccypair'].str[3:6]
 
-    # Configure AgGrid
-    gb = GridOptionsBuilder.from_dataframe(summary_df.drop(columns=['lower_bound']))
-    for col in summary_df.columns:
-        if col in ['Deviation_Bucket', 'lower_bound', 'TOTAL']:
+    # Step 2: Melt to assign each trade to both currencies
+    melted = alerts_df.melt(
+        id_vars=['deviationpercent'],
+        value_vars=['CCY1', 'CCY2'],
+        var_name='Position',
+        value_name='Currency'
+    )
+
+    # Step 3: Define bins
+    max_dev = melted['deviationpercent'].max()
+    max_rounded = round(np.ceil(max_dev / bin_size) * bin_size, 2)
+    bins = np.arange(0.0, max_rounded + bin_size, bin_size)
+
+    bin_labels = [f"{round(bins[i], 2)}–{round(bins[i+1], 2)}" for i in range(len(bins) - 1)]
+
+    melted['Deviation_Bucket'] = pd.cut(
+        melted['deviationpercent'],
+        bins=bins,
+        labels=bin_labels,
+        include_lowest=True
+    )
+
+    # Step 4: Pivot table
+    summary = melted.pivot_table(
+        index='Deviation_Bucket',
+        columns='Currency',
+        values='deviationpercent',
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
+
+    # Step 5: Extract lower bounds
+    summary['Lower_Bound'] = summary['Deviation_Bucket'].apply(lambda x: float(str(x).split('–')[0]) if x != 'TOTAL' else np.nan)
+
+    # Step 6: Add TOTAL row
+    total_row = summary.drop(columns=['Deviation_Bucket', 'Lower_Bound']).sum().to_frame().T
+    total_row.insert(0, 'Deviation_Bucket', 'TOTAL')
+    total_row['Lower_Bound'] = np.nan
+    summary = pd.concat([summary, total_row], ignore_index=True)
+
+    # Step 7: Drop all-zero columns
+    non_total = summary[summary['Deviation_Bucket'] != 'TOTAL']
+    non_zero_cols = non_total.drop(columns=['Deviation_Bucket', 'Lower_Bound']).any()
+    keep_cols = ['Deviation_Bucket', 'Lower_Bound'] + list(non_zero_cols[non_zero_cols].index)
+    summary = summary[keep_cols]
+
+    # Step 8: Highlight rows > max threshold
+    js = JsCode(f"""
+        function(params) {{
+            let val = params.data.Lower_Bound;
+            if (val > {max_threshold}) {{
+                return {{ 'backgroundColor': '#fff3cd', 'color': 'black' }};
+            }}
+        }}
+    """)
+
+    # Step 9: AgGrid setup
+    st.subheader("📊 Deviation Bucket Distribution Per Currency (Dual Mapping)")
+
+    gb = GridOptionsBuilder.from_dataframe(summary.drop(columns=['Lower_Bound']))
+    for col in summary.columns:
+        if col == 'Lower_Bound':
             continue
-        threshold = threshold_map.get(col, None)
-        if threshold is not None:
-            js = JsCode(f"""
-                function(params) {{
-                    let val = params.value;
-                    let rowVal = parseFloat(params.data.lower_bound);
-                    if (rowVal > {threshold}) {{
-                        return {{ 'backgroundColor': '#f8d7da', 'color': 'black' }};
-                    }}
-                }}
-            """)
+        gb.configure_column(col, cellStyle=js if col != 'Deviation_Bucket' else None, minWidth=100, autoWidth=True)
+
+    grid_options = gb.build()
+
+    st.markdown("""
+    <style>
+    .ag-theme-streamlit {
+        overflow-x: auto !important;
+        display: block;
+        white-space: nowrap;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    AgGrid(
+        summary.drop(columns=['Lower_Bound']),
+        gridOptions=grid_options,
+        height=400,
+        width='100%',
+        fit_columns_on_grid_load=False,
+        theme='streamlit',
+        allow_unsafe_jscode=True
+    )
+
+    # Download
+    csv_data = summary.drop(columns=['Lower_Bound']).to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Download Deviation Bucket Summary",
+        data=csv_data,
+        file_name="currency_deviation_distribution.csv",
+        mime="text/csv"
+    )
             gb.configure_column(col, cellStyle=js)
         else:
             gb.configure_column(col)
