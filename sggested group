@@ -1,0 +1,62 @@
+import pandas as pd
+import numpy as np
+
+def generate_suggested_threshold_summary(alerts_df, bin_labels, bin_size=0.5):
+    """
+    Generate a suggested threshold summary for alerts beyond the last group-wise threshold.
+    
+    Parameters:
+        alerts_df (pd.DataFrame): Original alerts with 'deviationpercent' and 'Currency' columns.
+        bin_labels (List[str]): List of existing group-wise threshold bin labels like ["0.0–0.4", ..., "2.0–inf"].
+        bin_size (float): Size of suggested bin intervals (default = 0.5).
+    
+    Returns:
+        suggested_summary (pd.DataFrame): Pivoted summary with suggested bins x currencies.
+        alerts_above (pd.DataFrame): Filtered alerts that were used for suggestion (for optional download).
+    """
+    # Step 1: Parse last defined group threshold from bin_labels
+    last_threshold = max([
+        float(label.split("–")[1].replace('inf', '9999'))
+        for label in bin_labels if 'inf' in label
+    ])
+
+    # Step 2: Filter alerts above last threshold
+    alerts_above = alerts_df[alerts_df['deviationpercent'] > last_threshold].copy()
+    
+    if alerts_above.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Step 3: Determine max deviation value
+    max_dev = alerts_above['deviationpercent'].max()
+    max_dev_rounded = round(np.ceil(max_dev / bin_size) * bin_size, 2)
+
+    # Step 4: Define new bin edges and labels
+    new_bins = np.arange(last_threshold, max_dev_rounded + bin_size, bin_size)
+    new_bin_labels = [
+        f"{round(new_bins[i], 2)}–{round(new_bins[i+1], 2)}"
+        for i in range(len(new_bins) - 1)
+    ]
+
+    # Step 5: Assign bins
+    alerts_above['Suggested_Bucket'] = pd.cut(
+        alerts_above['deviationpercent'],
+        bins=new_bins,
+        labels=new_bin_labels,
+        include_lowest=True
+    )
+
+    # Step 6: Pivot summary table (Suggested_Bucket x Currency)
+    suggested_summary = alerts_above.pivot_table(
+        index='Suggested_Bucket',
+        columns='Currency',
+        values='trade_id',
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
+
+    # Step 7: Add total row
+    total_row = suggested_summary.drop(columns='Suggested_Bucket').sum().to_frame().T
+    total_row.insert(0, 'Suggested_Bucket', 'TOTAL')
+    suggested_summary = pd.concat([suggested_summary, total_row], ignore_index=True)
+
+    return suggested_summary, alerts_above
