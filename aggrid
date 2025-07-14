@@ -1,0 +1,28 @@
+# Add custom scroll style
+st.markdown("""
+<style>
+.ag-theme-streamlit {
+    overflow-x: auto;
+    white-space: nowrap;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Configure column widths
+for col in summary_df.columns:
+    gb.configure_column(col, maxWidth=120)
+
+# Rebuild with scroll allowed
+grid_options = gb.build()
+
+# Render the scrollable pivot
+response = AgGrid(
+    summary_df,
+    gridOptions=grid_options,
+    height=350,
+    width='100%',
+    update_mode=GridUpdateMode.SELECTION_CHANGED,
+    fit_columns_on_grid_load=False,
+    allow_unsafe_jscode=True,
+    theme='streamlit',
+)
