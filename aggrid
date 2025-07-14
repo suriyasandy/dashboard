@@ -1,2 +1,4 @@
-non_zero_cols = expanded_summary.loc[:, expanded_summary.columns != 'Expanded_Bucket'].any()
+# ✅ Exclude columns where all values are 0 (excluding TOTAL row)
+non_total_df = expanded_summary[expanded_summary['Expanded_Bucket'] != 'TOTAL']
+non_zero_cols = non_total_df.loc[:, non_total_df.columns != 'Expanded_Bucket'].any()
 expanded_summary = expanded_summary[['Expanded_Bucket'] + list(non_zero_cols[non_zero_cols].index)]
