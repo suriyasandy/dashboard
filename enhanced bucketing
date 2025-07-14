@@ -1,0 +1,225 @@
+import pandas as pd
+import numpy as np
+import streamlit as st
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+
+st.set_page_config(page_title="GFX Threshold Dashboard", layout="wide")
+
+# ==============================================
+# 🔹 Load Sample Data (Replace with real data)
+# ==============================================
+@st.cache_data
+def load_data():
+    threshold_df = pd.DataFrame({
+        'GROUP': [1, 2, 3, 1, 3],
+        'Threshold': [0.4, 0.6, 0.9, 0.4, 0.9],
+        'CURR': ['EUR', 'EUR', 'EUR', 'USD', 'USD']
+    })
+
+    alerts_df = pd.DataFrame({
+        'trade_id': range(1, 21),
+        'ccypair': ['EURUSD']*10 + ['USDJPY']*10,
+        'deviationpercent': [0.1, 0.3, 0.45, 0.5, 0.95, 0.2, 0.35, 0.55, 0.65, 1.2,
+                             2.1, 2.4, 2.7, 3.1, 3.6, 2.2, 2.8, 3.4, 3.9, 4.5]
+    })
+
+    return alerts_df, threshold_df
+
+alerts_df, threshold_df = load_data()
+
+# ==============================================
+# 🔹 Build Group-wise Threshold Summary
+# ==============================================
+def generate_groupwise_threshold_summary(alerts_df, threshold_df):
+    group_thresholds = (
+        threshold_df[['GROUP', 'Threshold']]
+        .drop_duplicates()
+        .sort_values(by='Threshold')
+        .reset_index(drop=True)
+    )
+
+    bin_edges = [0.0] + list(group_thresholds['Threshold'].values)
+    bin_edges[-1] = bin_edges[-1]
+    bin_edges.append(np.inf)
+
+    bin_labels = [
+        f"{round(bin_edges[i], 2)}–{'inf' if bin_edges[i+1] == np.inf else round(bin_edges[i+1], 2)}"
+        for i in range(len(bin_edges)-1)
+    ]
+
+    alerts_df = alerts_df.copy()
+    alerts_df['Currency'] = alerts_df['ccypair'].str[:3]
+
+    def get_alert_bucket(deviation):
+        if pd.isnull(deviation):
+            return np.nan
+        return pd.cut([deviation], bins=bin_edges, labels=bin_labels, include_lowest=True)[0]
+
+    alerts_df['Threshold_Bucket'] = alerts_df['deviationpercent'].apply(get_alert_bucket)
+
+    # Set as ordered categorical
+    alerts_df['Threshold_Bucket'] = pd.Categorical(
+        alerts_df['Threshold_Bucket'],
+        categories=bin_labels,
+        ordered=True
+    )
+
+    summary = alerts_df.pivot_table(
+        index='Threshold_Bucket',
+        columns='Currency',
+        values='trade_id',
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
+
+    all_ranges = pd.DataFrame({'Threshold_Bucket': bin_labels})
+    summary = pd.merge(all_ranges, summary, on='Threshold_Bucket', how='left')
+    summary = summary.fillna(0)
+
+    # Add total
+    total_row = summary.drop(columns=['Threshold_Bucket']).sum().to_frame().T
+    total_row.insert(0, 'Threshold_Bucket', 'TOTAL')
+    summary = pd.concat([summary, total_row], ignore_index=True)
+
+    return summary, alerts_df, bin_labels
+
+# ==============================================
+# 🔹 Generate Group Summary
+# ==============================================
+summary_df, alerts_df, bin_labels = generate_groupwise_threshold_summary(alerts_df, threshold_df)
+
+# ==============================================
+# 🔹 Display Main Summary with Scrollable AgGrid
+# ==============================================
+st.title("📊 GFX Threshold Summary Dashboard")
+st.subheader("🧩 Group-wise Threshold Summary")
+
+# Custom CSS to enable scroll
+st.markdown("""
+<style>
+.ag-theme-streamlit {
+    overflow-x: auto;
+    white-space: nowrap;
+}
+</style>
+""", unsafe_allow_html=True)
+
+gb = GridOptionsBuilder.from_dataframe(summary_df)
+for col in summary_df.columns:
+    gb.configure_column(col, maxWidth=120)
+
+gb.configure_selection(selection_mode="multiple", use_checkbox=True)
+grid_options = gb.build()
+
+response = AgGrid(
+    summary_df,
+    gridOptions=grid_options,
+    height=350,
+    width='100%',
+    fit_columns_on_grid_load=False,
+    update_mode=GridUpdateMode.SELECTION_CHANGED,
+    allow_unsafe_jscode=True,
+    theme='streamlit',
+)
+
+# ==============================================
+# 🔹 Show Alerts for Selected Bins
+# ==============================================
+selected_rows = response['selected_rows']
+
+selected_buckets = []
+for row in selected_rows:
+    if isinstance(row, dict) and 'Threshold_Bucket' in row:
+        bucket = row['Threshold_Bucket']
+        if bucket != 'TOTAL':
+            selected_buckets.append(bucket)
+
+if selected_buckets:
+    selected_buckets = pd.Categorical(
+        selected_buckets,
+        categories=alerts_df['Threshold_Bucket'].cat.categories,
+        ordered=True
+    )
+
+    filtered_alerts = alerts_df[alerts_df['Threshold_Bucket'].isin(selected_buckets)].copy()
+
+    st.markdown("### 🔍 Filtered Alerts for Selected Threshold Bin(s)")
+    st.dataframe(filtered_alerts, use_container_width=True)
+
+    csv_data = filtered_alerts.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Download Filtered Alerts",
+        data=csv_data,
+        file_name="filtered_alerts.csv",
+        mime="text/csv"
+    )
+else:
+    st.info("☑️ Select one or more bins to view alert records below.")
+
+# ==============================================
+# 🔹 Suggested Threshold Bins (Above Last Threshold)
+# ==============================================
+st.markdown("---")
+st.subheader("📈 Suggested Thresholds for Deviation > Last Group")
+
+# Get last defined threshold
+last_threshold = max([float(label.split("–")[1].replace('inf', '9999')) for label in bin_labels if 'inf' in label])
+alerts_above = alerts_df[alerts_df['deviationpercent'] > last_threshold].copy()
+
+if alerts_above.empty:
+    st.success("✅ No alerts found above the last group threshold.")
+else:
+    max_dev = alerts_above['deviationpercent'].max()
+    new_bins = np.arange(last_threshold, max_dev + 0.5, 0.5)
+    new_bins = np.append(new_bins, [np.inf])
+
+    new_bin_labels = [
+        f"{round(new_bins[i], 2)}–{'inf' if new_bins[i+1] == np.inf else round(new_bins[i+1], 2)}"
+        for i in range(len(new_bins)-1)
+    ]
+
+    alerts_above['Suggested_Bucket'] = pd.cut(
+        alerts_above['deviationpercent'],
+        bins=new_bins,
+        labels=new_bin_labels,
+        include_lowest=True
+    )
+
+    suggested_summary = alerts_above.pivot_table(
+        index='Suggested_Bucket',
+        columns='Currency',
+        values='trade_id',
+        aggfunc='count',
+        fill_value=0
+    ).reset_index()
+
+    total_row = suggested_summary.drop(columns='Suggested_Bucket').sum().to_frame().T
+    total_row.insert(0, 'Suggested_Bucket', 'TOTAL')
+    suggested_summary = pd.concat([suggested_summary, total_row], ignore_index=True)
+
+    # Display suggested bin table
+    gb2 = GridOptionsBuilder.from_dataframe(suggested_summary)
+    for col in suggested_summary.columns:
+        gb2.configure_column(col, maxWidth=120)
+    grid_options2 = gb2.build()
+
+    st.markdown("### 🔍 Suggested New Threshold Binning (Bin Size = 0.5)")
+
+    AgGrid(
+        suggested_summary,
+        gridOptions=grid_options2,
+        height=350,
+        width='100%',
+        fit_columns_on_grid_load=False,
+        update_mode=GridUpdateMode.NO_UPDATE,
+        allow_unsafe_jscode=True,
+        theme='streamlit',
+    )
+
+    csv_suggested = suggested_summary.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Download Suggested Threshold Summary",
+        data=csv_suggested,
+        file_name="suggested_threshold_summary.csv",
+        mime="text/csv"
+    )
