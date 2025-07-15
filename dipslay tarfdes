@@ -1,0 +1,41 @@
+# Assuming you already ran AgGrid and stored its response
+grid_response = AgGrid(...)
+
+selected_rows = grid_response['selected_rows']
+
+if selected_rows:
+    selected_alerts = pd.DataFrame()
+    
+    for row in selected_rows:
+        bucket_label = row['Deviation_Bucket']
+        if bucket_label == 'TOTAL':
+            continue
+        
+        try:
+            lower, upper = bucket_label.replace('inf', '9999').split('–')
+            lower = float(lower)
+            upper = float(upper)
+        except:
+            continue
+
+        # For each bin, get matching alerts
+        matching = alerts_df[
+            (alerts_df['deviationpercent'] >= lower) &
+            (alerts_df['deviationpercent'] < upper)
+        ]
+        selected_alerts = pd.concat([selected_alerts, matching], ignore_index=True)
+    
+    # Drop duplicates just in case
+    selected_alerts = selected_alerts.drop_duplicates()
+
+    st.markdown(f"### 📋 Alert Records for Selected Bucket(s)")
+    st.dataframe(selected_alerts)
+
+    # Optional download
+    csv = selected_alerts.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="⬇️ Download Filtered Alerts",
+        data=csv,
+        file_name="selected_alerts.csv",
+        mime="text/csv"
+    )
