@@ -1,0 +1,58 @@
+Here’s a sample Jira task content for setting up Reuters and Bloomberg connectivity, tailored to your recent activities involving authentication, certificate handling, proxy setup, API integration, and data extraction.
+
+⸻
+
+Jira Task Title:
+
+Set Up and Validate Reuters & Bloomberg API Connectivity
+
+⸻
+
+Description:
+
+Implement secure connectivity and data extraction pipeline for Reuters and Bloomberg platforms. The task involves handling authentication, proxy configuration, certificate-based access, and ensuring successful data retrieval through APIs.
+
+⸻
+
+Sub-tasks:
+	1.	Reuters Connectivity
+	•	Configure OAuth 2.0 authentication flow (client ID/secret-based)
+	•	Set up proxy configuration to handle corporate network restrictions
+	•	Implement token generation logic using requests.post with required headers and payload
+	•	Handle job submission for TickHistoryIntradaySummariesExtractRequest
+	•	Retrieve jobID, poll job status, and extract final compressed raw data using download URL
+	•	Validate data output (e.g., time series consistency, record count, compression integrity)
+	2.	Bloomberg Connectivity
+	•	Load .p12 certificate using Java (KeyStore) and Python (pkcs12 via cryptography)
+	•	Configure SSL context with certificate and private key for HTTPS calls
+	•	Set up SOCKS or HTTP proxy with proxy host, port, username, and password
+	•	Integrate with Bloomberg REST API using requests (Python) or HttpsURLConnection (Java)
+	•	Validate token request and service endpoint access
+	•	Test a basic data retrieval (e.g., historical tick or reference data)
+	3.	Common Tasks
+	•	Prepare configuration module with separate entries for UAT/PROD endpoints, credentials, headers
+	•	Develop reusable utilities for:
+	•	Token retrieval
+	•	Job submission and polling
+	•	SSL context loading from .p12
+	•	Log all requests/responses with masking of sensitive info
+	•	Handle common error codes (e.g., 407 Proxy Auth, SSL errors, timeouts)
+
+⸻
+
+Acceptance Criteria:
+	•	Reuters and Bloomberg APIs successfully authenticated and able to return historical data
+	•	Proxy and SSL configurations are reusable and abstracted from business logic
+	•	Retry logic for job polling implemented for robustness
+	•	All configuration parameters externalized (e.g., via config file or environment variables)
+
+⸻
+
+Attachments:
+	•	Reuters WSDL or API Docs
+	•	Bloomberg .p12 sample (dummy)
+	•	Sample response files for Reuters and Bloomberg (if available)
+
+⸻
+
+Would you like a version of this exported to a Word or Markdown file for uploading to Jira?
