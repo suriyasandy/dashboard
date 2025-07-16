@@ -1,0 +1,82 @@
+Here’s the complete summary of your GFX Threshold Deviation Dashboard audio demo content, in a concise and professional format — suitable for your recording, presentation, or documentation:
+
+⸻
+
+🎙️ GFX Threshold Deviation Dashboard – Audio Demo Summary
+
+This dashboard addresses a key challenge in trade surveillance: calibrating deviation thresholds effectively across currencies and legal entities. Too many alerts create noise, while loose thresholds risk missing true issues. The dashboard offers an end-to-end solution for threshold analysis, impact assessment, and exception mapping.
+
+⸻
+
+1. Why This Dashboard?
+
+It enables users to:
+	•	Reduce false positives by tuning thresholds.
+	•	Evaluate the effect of threshold changes before applying them.
+	•	Align alerts with real exceptions using exception data analysis.
+
+⸻
+
+2. Data Ingestion
+	•	Trade data from UAT and PROD is downloaded using OAuth APIs.
+	•	Each file is named and stored by product type, legal entity, and date.
+	•	UAT records are filtered to retain only those present in PROD.
+	•	Out-of-scope records are removed using alert descriptions.
+	•	Exception data is fetched for a selected date range.
+
+⸻
+
+3. Threshold Management
+	•	Users upload threshold files containing original and proposed values.
+	•	Choose between group-wise or currency-wise thresholding.
+	•	Editable tables allow adjusting thresholds within the UI.
+	•	Update or reset changes dynamically.
+
+⸻
+
+4. Impact Analysis
+	•	On clicking “Run Impact Analysis”, each trade is compared against the maximum threshold between its two currencies.
+	•	Summary output shows total volume and alert counts under:
+	•	Original thresholds
+	•	Proposed thresholds
+	•	Adjusted thresholds
+	•	Displayed by Legal Entity and Source System.
+
+⸻
+
+5. Exception & Reason Code Mapping
+	•	Selecting a summary row triggers exception analysis.
+	•	High-level exception codes are shown by business date.
+	•	Clicking a code reveals detailed reason code breakdowns.
+	•	Helps validate threshold tuning against actual exceptions.
+
+⸻
+
+6. Deviation Bucket Summaries
+	•	Groupwise Buckets: Automatically created using adjusted thresholds; highlights trades beyond max thresholds.
+	•	Expanded Buckets: Fixed bin sizes for high-deviation trades; useful for analyzing outliers.
+	•	Both summaries support:
+	•	Dual-currency mapping
+	•	Pivoting
+	•	Filtering
+	•	Download
+
+⸻
+
+7. Final Impact
+
+This dashboard empowers compliance and surveillance teams to:
+	•	Fine-tune thresholds with data-backed confidence.
+	•	Understand how changes affect alert volumes.
+	•	Align threshold settings with operational realities.
+
+All of this is wrapped in a simple, interactive Streamlit interface.
+
+⸻
+
+Let me know if you’d like this as:
+	•	A PDF or DOCX summary
+	•	Teleprompter-ready version for narration
+	•	Formatted slides for a voice-over presentation
+
+Shall I export it now?
